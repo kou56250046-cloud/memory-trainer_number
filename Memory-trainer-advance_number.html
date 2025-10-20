@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>🧠 数字記憶トレーニング（完全版）</title>
+<style>
+  body { background: #0f172a; color: #e5e7eb; font-family: system-ui;
+         max-width: 800px; margin: 30px auto; padding: 0 16px; text-align: center; }
+  h1 { font-size: 26px; margin-bottom: 10px; }
+  .hidden { display: none; }
+  .number-box { font-size: 28px; letter-spacing: 4px; padding: 20px;
+                background: #1e293b; border-radius: 12px; margin: 20px 0; }
+  input[type="number"], input[type="text"] {
+    padding: 8px; font-size: 16px; border-radius: 8px; border: none;
+    text-align: center; margin: 4px;
+  }
+  button {
+    background: #22c55e; color: #000; border: none; padding: 10px 16px;
+    font-size: 16px; border-radius: 8px; cursor: pointer; margin: 6px;
+  }
+  button.danger { background: #ef4444; color: #fff; }
+  button.ghost { background: #0b1220; color: #e5e7eb; border: 1px solid #223; }
+  .result-box { margin-top: 20px; padding: 10px; background: #1e293b; border-radius: 8px; }
+  .chip { background:#0b1220;border:1px solid #334155;padding:6px 10px;
+          border-radius:999px;margin:4px;display:inline-block; }
+  canvas { margin-top: 20px; background:#0b1220;border:1px solid #223;border-radius:12px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<h1>🧠 数字記憶トレーニング</h1>
+
+<!-- 設定 -->
+<div>
+  <label>桁数：</label>
+  <input id="digitCount" type="number" min="1" max="100" value="20">
+  <label>表示秒数：</label>
+  <input id="seconds" type="number" min="1" max="60" value="30">
+</div>
+<button id="start">▶ トレーニング開始</button>
+
+<!-- 表示フェーズ -->
+<div id="showPhase" class="hidden">
+  <div class="number-box" id="numberDisplay"></div>
+  <div id="countdown"></div>
+</div>
+
+<!-- 回答フェーズ -->
+<div id="answerPhase" class="hidden">
+  <p>覚えた数字を入力してください👇</p>
+  <input type="text" id="answerInput" placeholder="ここに入力">
+  <button id="check">採点</button>
+</div>
+
+<!-- 結果フェーズ -->
+<div id="resultPhase" class="hidden">
+  <div class="result-box">
+    <p><b>正解：</b><span id="correct"></span></p>
+    <p><b>あなたの入力：</b><span id="yourAnswer"></span></p>
+    <p><b>正答率：</b><span id="accuracy"></span>%</p>
+  </div>
+  <button id="restart" class="ghost">もう一度</button>
+</div>
+
+<!-- 称号・グラフ -->
+<hr>
+<h2>🏅 称号</h2>
+<div id="titleDisplay"></div>
+<p>連続記録：<span id="streakDisplay">0</span>日｜平均正答率：<span id="avgDisplay">0</span>%</p>
+
+<h2>📊 正答率の推移</h2>
+<canvas id="chart" width="600" height="200"></canvas>
+
+<!-- 履歴操作 -->
+<div style="margin-top:20px;">
+  <button id="exportCsv" class="ghost">📥 CSVエクスポート</button>
+  <button id="clearHist" class="danger">🧹 履歴リセット</button>
+</div>
+
+<script>
+const numberDisplay = document.getElementById("numberDisplay");
+const showPhase = document.getElementById("showPhase");
+const answerPhase = document.getElementById("answerPhase");
+const resultPhase = document.getElementById("resultPhase");
+const answerInput = document.getElementById("answerInput");
+const correctEl = document.getElementById("correct");
+const yourAnswerEl = document.getElementById("yourAnswer");
+const accuracyEl = document.getElementById("accuracy");
+const countdownEl = document.getElementById("countdown");
+
+let correctNumber = "";
+let timer = null;
+let secLeft = 0;
+let history = JSON.parse(localStorage.getItem("digit_history") || "[]");
+
+function generateDigits(n) {
+  let s = "";
+  for (let i = 0; i < n; i++) s += Math.floor(Math.random() * 10);
+  return s;
+}
+function setPhase(phase) {
+  showPhase.classList.add("hidden");
+  answerPhase.classList.add("hidden");
+  resultPhase.classList.add("hidden");
+  if (phase) document.getElementById(phase).classList.remove("hidden");
+}
+function startTraining() {
+  const digitCount = Math.max(1, Math.min(100, Number(document.getElementById("digitCount").value)));
+  const seconds = Math.max(1, Math.min(60, Number(document.getElementById("seconds").value)));
+
+  correctNumber = generateDigits(digitCount);
+  numberDisplay.textContent = correctNumber;
+  secLeft = seconds;
+  countdownEl.textContent = `あと ${secLeft} 秒`;
+
+  setPhase("showPhase");
+  timer = setInterval(() => {
+    secLeft--;
+    countdownEl.textContent = `あと ${secLeft} 秒`;
+    if (secLeft <= 0) {
+      clearInterval(timer);
+      setPhase("answerPhase");
+      answerInput.value = "";
+      answerInput.focus();
+    }
+  }, 1000);
+}
+function checkAnswer() {
+  const ans = answerInput.value.trim();
+  let hit = 0;
+  for (let i = 0; i < correctNumber.length; i++) {
+    if (ans[i] === correctNumber[i]) hit++;
+  }
+  const acc = Math.round((hit / correctNumber.length) * 100);
+  correctEl.textContent = correctNumber;
+  yourAnswerEl.textContent = ans || "（未入力）";
+  accuracyEl.textContent = acc;
+  setPhase("resultPhase");
+
+  history.push({ timestamp: new Date().toLocaleString(), accuracy: acc });
+  localStorage.setItem("digit_history", JSON.stringify(history));
+  updateTitles();
+  drawChart();
+}
+
+// ====== 称号機能 ======
+function calcStreak(){
+  if (!history.length) return 0;
+  const days = [...new Set(history.map(r=>new Date(r.timestamp).toLocaleDateString()))]
+    .sort((a,b)=>new Date(b)-new Date(a));
+  const today = new Date().toLocaleDateString();
+  let streak = 0, current = new Date(today);
+  for(const d of days){
+    const dd=new Date(d);
+    if(dd.toLocaleDateString()===current.toLocaleDateString()){
+      streak++; current.setDate(current.getDate()-1);
+    } else break;
+  }
+  return streak;
+}
+function calcAverageAccuracy(){
+  if (!history.length) return 0;
+  return Math.round(history.reduce((a,b)=>a+b.accuracy,0)/history.length);
+}
+function updateTitles(){
+  const streak = calcStreak();
+  const avg = calcAverageAccuracy();
+  const titles = [];
+  if(streak>=7)  titles.push("🌱 集中の芽");
+  if(streak>=30) titles.push("⚔️ 継続の戦士");
+  if(avg>=90)    titles.push("🧠 記憶の達人");
+  else if(avg>=80) titles.push("📘 安定の覚者");
+  document.getElementById("titleDisplay").innerHTML = titles.length ? 
+    titles.map(t=>`<span class="chip">${t}</span>`).join("") :
+    `<span class="muted">まだ称号はありません</span>`;
+  document.getElementById("streakDisplay").textContent = streak;
+  document.getElementById("avgDisplay").textContent = avg;
+}
+
+// ====== グラフ機能 ======
+let chartInstance = null;
+function drawChart(){
+  const labels = history.map(h=>h.timestamp);
+  const values = history.map(h=>h.accuracy);
+  const ctx = document.getElementById('chart').getContext('2d');
+  if(chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(ctx,{
+    type:'line',
+    data:{ labels, datasets:[{label:"正答率",data:values,borderColor:'#22c55e',tension:0.2}] },
+    options:{ responsive:true, scales:{ y:{min:0,max:100,ticks:{callback:v=>v+"%"} } } }
+  });
+}
+
+// ====== CSVエクスポート ======
+function exportToCSV() {
+  if (!history.length) {
+    alert("履歴がありません。");
+    return;
+  }
+  const header = ["No","日時","正答率(%)"];
+  const rows = history.map((h,i)=>[i+1,h.timestamp,h.accuracy]);
+  const csv = [header, ...rows].map(r=>r.join(",")).join("\n");
+  const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "digit_memory_history.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ====== 履歴リセット ======
+function clearHistory(){
+  if(!confirm("履歴をすべて削除しますか？")) return;
+  history = [];
+  localStorage.removeItem("digit_history");
+  updateTitles();
+  drawChart();
+  alert("履歴をクリアしました。");
+}
+
+// ====== イベント ======
+document.getElementById("start").addEventListener("click", startTraining);
+document.getElementById("check").addEventListener("click", checkAnswer);
+document.getElementById("restart").addEventListener("click", () => setPhase(null));
+document.getElementById("exportCsv").addEventListener("click", exportToCSV);
+document.getElementById("clearHist").addEventListener("click", clearHistory);
+
+// 初期化
+updateTitles();
+drawChart();
+</script>
+
+</body>
+</html>

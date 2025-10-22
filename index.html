@@ -43,8 +43,12 @@
   .ghost { background:#1e293b; color:#e5e7eb; border:1px solid #334155; }
   .danger { background:#ef4444; color:white; }
   .pill { display:inline-block; background:#1e293b; padding:6px 12px; margin:4px; border-radius:999px; }
-  #chart { background:#1e293b; border-radius:12px; margin-top:20px; }
+  #chart, #avgChart { background:#1e293b; border-radius:12px; margin-top:20px; }
   #countdownText { text-align:center; font-size:16px; color:#94a3b8; margin-bottom:5px; }
+
+  table { width:100%; margin-top:16px; border-collapse:collapse; }
+  th, td { border-bottom:1px solid #334155; padding:8px; text-align:center; font-size:14px; }
+  th { color:#93c5fd; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -64,6 +68,7 @@
 <div id="countdownText"></div>
 <div class="progress-container"><div class="progress-bar" id="progressBar"></div></div>
 
+<!-- 回答入力 -->
 <div id="inputArea" hidden>
   <h3>思い出して入力</h3>
   <textarea id="answer"></textarea>
@@ -72,10 +77,12 @@
   <button class="ghost" id="retryBtn">⟲ やり直し</button>
 </div>
 
+<!-- 結果表示 -->
 <div id="resultArea" hidden>
   <h3>結果</h3>
   <div class="pill">正答率：<span id="accuracyText">0</span>%</div>
   <div class="pill">スコア：<span id="scoreText">0</span></div>
+  <div class="pill">桁数：<span id="digitText">0</span></div>
   <div class="pill">時間：<span id="timeText">0</span>秒</div>
   <div class="pill">一致数：<span id="hitText">0</span></div>
   <br>
@@ -85,8 +92,28 @@
 <h2>🏅 称号</h2>
 <div id="titleDisplay" class="pill">まだ称号はありません</div>
 
-<h2>📊 スコア推移</h2>
+<!-- 折れ線グラフ -->
+<h2>📈 スコア履歴</h2>
 <canvas id="chart"></canvas>
+
+<!-- 平均スコア棒グラフ -->
+<h2>📊 平均スコア</h2>
+<div>
+  <button class="ghost" id="dailyBtn">日別</button>
+  <button class="ghost" id="monthlyBtn">月別</button>
+</div>
+<canvas id="avgChart"></canvas>
+
+<!-- スコア表 -->
+<h2>🧮 スコア一覧</h2>
+<table>
+  <thead>
+    <tr>
+      <th>#</th><th>日時</th><th>正答率</th><th>桁数</th><th>時間</th><th>スコア</th>
+    </tr>
+  </thead>
+  <tbody id="scoreTable"></tbody>
+</table>
 
 <div style="margin-top:10px;">
   <button class="ghost" id="exportCsv">CSVエクスポート</button>
@@ -102,6 +129,7 @@ const accuracyEl = document.getElementById("accuracyText");
 const scoreEl = document.getElementById("scoreText");
 const timeEl = document.getElementById("timeText");
 const hitEl = document.getElementById("hitText");
+const digitEl = document.getElementById("digitText");
 const countdownText = document.getElementById("countdownText");
 const progressBar = document.getElementById("progressBar");
 
@@ -110,20 +138,18 @@ let timer = null;
 let countdownTimer = null;
 let history = JSON.parse(localStorage.getItem("digit_history") || "[]");
 let chartInstance = null;
+let avgChartInstance = null;
+let avgMode = "day"; // 日 or 月
 
 // ===== 数字列生成 =====
 function generateDigits(len) {
-  let result = "";
-  for (let i = 0; i < len; i++) result += Math.floor(Math.random() * 10);
-  return result;
+  return Array.from({length: len}, () => Math.floor(Math.random()*10)).join('');
 }
 
-// ===== フォントサイズ自動調整 =====
+// ===== フォントサイズ調整 =====
 function adjustFontSize() {
   const len = correctNumber.length;
-  if (len <= 20) display.style.fontSize = "28px";
-  else if (len <= 50) display.style.fontSize = "22px";
-  else display.style.fontSize = "18px";
+  display.style.fontSize = len <= 20 ? "28px" : len <= 50 ? "22px" : "18px";
 }
 
 // ===== トレーニング開始 =====
@@ -144,8 +170,7 @@ document.getElementById("startBtn").addEventListener("click", () => {
   countdownTimer = setInterval(() => {
     remaining--;
     countdownText.textContent = `残り ${remaining} 秒`;
-    const progress = (remaining / sec) * 100;
-    progressBar.style.width = progress + "%";
+    progressBar.style.width = (remaining / sec) * 100 + "%";
     if (remaining <= 0) clearInterval(countdownTimer);
   }, 1000);
 
@@ -164,24 +189,25 @@ document.getElementById("startBtn").addEventListener("click", () => {
 document.getElementById("checkBtn").addEventListener("click", () => {
   clearInterval(countdownTimer);
   const ans = answerEl.value.trim();
+  const len = correctNumber.length;
+  const sec = Number(document.getElementById("seconds").value);
   let hit = 0;
-  for (let i = 0; i < correctNumber.length; i++) {
-    if (ans[i] === correctNumber[i]) hit++;
-  }
+  for (let i = 0; i < len; i++) if (ans[i] === correctNumber[i]) hit++;
 
-  const acc = Math.round((hit / correctNumber.length) * 100);
-  const time = Number(document.getElementById("seconds").value);
-  const score = Math.round(acc * (60 / time));
+  const acc = Math.round((hit / len) * 100);
+  const score = Math.round(acc * (len / sec));
 
   accuracyEl.textContent = acc;
   scoreEl.textContent = score;
-  timeEl.textContent = time;
+  timeEl.textContent = sec;
   hitEl.textContent = hit;
+  digitEl.textContent = len;
 
   history.push({
     timestamp: new Date().toLocaleString(),
     accuracy: acc,
-    time: time,
+    time: sec,
+    digits: len,
     score: score
   });
   localStorage.setItem("digit_history", JSON.stringify(history));
@@ -189,7 +215,9 @@ document.getElementById("checkBtn").addEventListener("click", () => {
   resultArea.hidden = false;
   inputArea.hidden = true;
   updateTitles();
-  drawChart();
+  drawScoreChart();
+  drawAvgChart();
+  renderTable();
 });
 
 // ===== 称号更新 =====
@@ -206,32 +234,67 @@ function updateTitles(){
     : `<span class="pill">まだ称号はありません</span>`;
 }
 
-// ===== グラフ描画 =====
-function drawChart(){
-  const labels = history.map(h=>h.timestamp);
-  const accValues = history.map(h=>h.accuracy);
-  const scoreValues = history.map(h=>h.score);
-
+// ===== 折れ線グラフ（履歴） =====
+function drawScoreChart(){
+  const labels = history.map((h,i)=>`#${i+1}`);
+  const scores = history.map(h=>h.score);
   const ctx = document.getElementById("chart").getContext("2d");
   if(chartInstance) chartInstance.destroy();
   chartInstance = new Chart(ctx,{
     type:"line",
-    data:{
-      labels,
-      datasets:[
-        {label:"正答率", data:accValues, borderColor:"#22c55e", tension:0.2},
-        {label:"スコア", data:scoreValues, borderColor:"#3b82f6", tension:0.2}
-      ]
-    },
-    options:{ responsive:true, scales:{ y:{ beginAtZero:true, suggestedMax:1000 } } }
+    data:{ labels, datasets:[{ label:"スコア", data:scores, borderColor:"#22c55e", tension:0.2 }] },
+    options:{ responsive:true, scales:{ y:{ beginAtZero:true, suggestedMax:300 } } }
+  });
+}
+
+// ===== 日/月集計 =====
+function aggregateAvg(){
+  const daily = {}, monthly = {};
+  history.forEach(h=>{
+    const d = new Date(h.timestamp);
+    const dayKey = d.toLocaleDateString();
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    (daily[dayKey] ||= []).push(h.score);
+    (monthly[monthKey] ||= []).push(h.score);
+  });
+  const dailyAvg = Object.entries(daily).map(([k,v])=>({label:k,avg:Math.round(v.reduce((a,b)=>a+b,0)/v.length)}));
+  const monthlyAvg = Object.entries(monthly).map(([k,v])=>({label:k,avg:Math.round(v.reduce((a,b)=>a+b,0)/v.length)}));
+  return { dailyAvg, monthlyAvg };
+}
+
+// ===== 平均スコア棒グラフ =====
+function drawAvgChart(){
+  const { dailyAvg, monthlyAvg } = aggregateAvg();
+  const data = avgMode === "day" ? dailyAvg : monthlyAvg;
+  const labels = data.map(d=>d.label);
+  const values = data.map(d=>d.avg);
+  const ctx = document.getElementById("avgChart").getContext("2d");
+  if(avgChartInstance) avgChartInstance.destroy();
+  avgChartInstance = new Chart(ctx,{
+    type:"bar",
+    data:{ labels, datasets:[{ label:`平均スコア（${avgMode==="day"?"日別":"月別"}）`, data:values, backgroundColor:"#3b82f6" }] },
+    options:{ responsive:true, scales:{ y:{ beginAtZero:true, suggestedMax:300 } } }
+  });
+}
+document.getElementById("dailyBtn").addEventListener("click",()=>{avgMode="day";drawAvgChart();});
+document.getElementById("monthlyBtn").addEventListener("click",()=>{avgMode="month";drawAvgChart();});
+
+// ===== スコア表 =====
+function renderTable(){
+  const tbody = document.getElementById("scoreTable");
+  tbody.innerHTML = "";
+  history.forEach((h,i)=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${i+1}</td><td>${h.timestamp}</td><td>${h.accuracy}%</td><td>${h.digits}</td><td>${h.time}</td><td>${h.score}</td>`;
+    tbody.appendChild(tr);
   });
 }
 
 // ===== CSVエクスポート =====
 document.getElementById("exportCsv").addEventListener("click", () => {
   if (!history.length) { alert("履歴がありません"); return; }
-  const header = ["No","日時","正答率(%)","表示秒数","スコア"];
-  const rows = history.map((h,i)=>[i+1,h.timestamp,h.accuracy,h.time,h.score]);
+  const header = ["No","日時","正答率(%)","桁数","表示秒数","スコア"];
+  const rows = history.map((h,i)=>[i+1,h.timestamp,h.accuracy,h.digits,h.time,h.score]);
   const csv = [header,...rows].map(r=>r.join(",")).join("\n");
   const blob = new Blob([csv],{type:"text/csv"});
   const url = URL.createObjectURL(blob);
@@ -241,13 +304,15 @@ document.getElementById("exportCsv").addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
-// ===== 履歴クリア =====
+// ===== 履歴リセット =====
 document.getElementById("clearHist").addEventListener("click", () => {
   if (!confirm("履歴をすべて削除しますか？")) return;
   history = [];
   localStorage.removeItem("digit_history");
   updateTitles();
-  drawChart();
+  drawScoreChart();
+  drawAvgChart();
+  renderTable();
   alert("履歴をクリアしました");
 });
 
@@ -263,8 +328,11 @@ document.getElementById("nextBtn").addEventListener("click", () => {
   display.textContent = "";
 });
 
-drawChart();
+// 初期描画
+drawScoreChart();
+drawAvgChart();
 updateTitles();
+renderTable();
 </script>
 </body>
 </html>
